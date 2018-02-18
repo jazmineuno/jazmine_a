@@ -85,8 +85,6 @@ struct find_consensus
 sqlite3* db;
 std::vector <consensus> seeds;
 std::vector <std::string> clients;
-std::vector <int64_t> notifies;
-volatile int notify_count = 0;
 volatile sig_atomic_t lookup_flag = false;
 volatile bool is_syncing = false;
 int srv;
@@ -166,6 +164,7 @@ std::string genkey(int s);
 commands retval(std::string const& nstr);
 void remove_seed(int fd);
 void handle_alarm(int sig);
+void send_notifies(int64_t blockid);
 static void daemonize();
 Json::Value parsejson(std::string sq);
 void sync_client(int cdx);

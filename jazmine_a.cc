@@ -237,9 +237,26 @@ hi gen_hash(std::string sendaddr,std::string recvaddr,std::string data_key,std::
 		hash_index.blockid = nextid;
 		hash_index.hash = newhash;
 		syslog (LOG_NOTICE, "Created Block %ld",nextid);
-		notifies.push_back(nextid);
+		send_notifies(nextid);
 	}
 	return hash_index;
+}
+
+void send_notifies(int64_t blockid)
+{
+	char * zErrMsg = 0;
+	std::string sql = 
+		"INSERT INTO notifies(blockid,notified) VALUES ("
+		+ std::to_string(blockid)				+ ",0);";
+	int rc = sqlite3_exec(db, sql.c_str(), NULL, 0, &zErrMsg);
+	if( rc != SQLITE_OK ){
+		syslog (LOG_NOTICE, "SQL Error: %s\n",zErrMsg);
+		fprintf(stderr, "SQL error: %s\n", zErrMsg);
+		sqlite3_free(zErrMsg);
+	} else {
+		syslog (LOG_NOTICE, "Added notify %ld",blockid);
+	}
+
 }
 
 std::string getblock(int64_t blockid,int s)
@@ -1289,8 +1306,48 @@ void sync_client(int cdx)
 				}
 			}
 		}
+	
+		/* process notifies */	
+		std::time_t notify_timestamp = std::time(0);
+		sqlite3_stmt* stmt;
+		char *zErrMsg = 0;
 
-		/* process notifies */
+		std::string nsql("SELECT blockid FROM notifies WHERE notified=0 ORDER BY blockid ASC");
+		if(sqlite3_prepare_v2(db, nsql.c_str(), -1, &stmt, NULL) != SQLITE_OK)
+		{
+			sqlite3_close(db);
+			sqlite3_finalize(stmt);
+			syslog(LOG_NOTICE, "Database error: %s", sqlite3_errmsg(db));
+			return;
+		}
+		int ret_code = 0;
+		while ((ret_code = sqlite3_step(stmt)) == SQLITE_ROW)
+		{
+			int64_t notifyid = (int64_t) sqlite3_column_int64(stmt, 0);
+			
+			Json::Value px = getblock(notifyid,fd);
+			px["command"] = "recvblock";
+			memset(buf, '0',sizeof(buf));
+			send_msg(fd,px.toStyledString());
+			int xxn;
+			while ((xxn = read(fd, buf, sizeof(buf)-1)) > 0)
+			{
+				break;
+			}
+			std::string up_notify("UPDATE notifies SET notified=" + std::to_string(notify_timestamp) + " WHERE blockid= " + std::to_string(notifyid));
+			int urc = sqlite3_exec(db, up_notify.c_str(), NULL, 0, &zErrMsg);
+			if( urc != SQLITE_OK )
+			{
+				syslog (LOG_NOTICE, "SQL Error: %s\n",zErrMsg);
+				sqlite3_free(zErrMsg);
+			} else {
+				syslog (LOG_NOTICE, "Sent Notify Block %ld",notifyid);
+			}
+		}
+		sqlite3_finalize(stmt);
+	
+
+		/*
 		if (notify_count>0)
 		{
 				for (int i = 0; i < notify_count; i++)
@@ -1306,7 +1363,7 @@ void sync_client(int cdx)
 					}
 				}
 		}
-
+		*/
 
 
                 if (n < 0)
@@ -1347,17 +1404,10 @@ void dns_callback (void* arg, int status, int timeouts, struct hostent* host)
 			}
 		}
 	}
-	notify_count = notifies.size();
 	for (int i=0;i<seeds.size();i++)
 	{
 		sync_client(i);
 	}
-	for (int x=0;x<notify_count;x++)
-	{
-		notifies.erase(notifies.begin()+x);
-	}
-	notify_count = 0;
-	
 }
 
 void main_loop(ares_channel &channel)
@@ -2126,6 +2176,7 @@ int main(int argc, char* argv[])
 	int dns_ttl = 60;
 	bool daemon = true;
 	std::string config_file = "jazmine_a.json";
+	char * zErrMsg = 0;
 	
 	if (argc>1)
 	{
@@ -2244,23 +2295,41 @@ int main(int argc, char* argv[])
 	if(sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, NULL) != SQLITE_OK)
 	{
 		std::string createdb("CREATE TABLE blocks (blockid INTEGER, nonce TEXT, hash TEXT, link_blockid INTEGER, timestamp INTEGER, ttl INTEGER, data_key TEXT, data TEXT, sig TEXT, sendaddr TEXT, recvaddr TEXT,validations INTEGER,signatures TEXT);");
-		if(sqlite3_prepare_v2(db, createdb.c_str(), -1, &stmt, NULL) != SQLITE_OK)
+		int rc = sqlite3_exec(db, createdb.c_str(), NULL, 0, &zErrMsg);
+		if( rc != SQLITE_OK )
 		{
-			sqlite3_close(db);
-			sqlite3_finalize(stmt);
-			syslog(LOG_NOTICE, "Could not create database: %s", sqlite3_errmsg(db));
-			return 1;
+			syslog (LOG_NOTICE, "SQL Error: %s\n",zErrMsg);
+			fprintf(stderr, "SQL error: %s\n", zErrMsg);
+			sqlite3_free(zErrMsg);
+			return EXIT_FAILURE;
+		} else {
+			std::cout << "Created new database.\n";
+			std::cout << "Created new blocks table.\n";
+			syslog(LOG_NOTICE, "Database created");
+			syslog(LOG_NOTICE, "Database table blocks created");
 		}
-		std::cout << "Created new database.\n";
-		syslog(LOG_NOTICE, "Database tables created");
+		std::string createnotify("CREATE TABLE notifies (blockid INTEGER, notified INTEGER)");
+		int nc = sqlite3_exec(db, createnotify.c_str(), NULL, 0, &zErrMsg);
+		if( nc != SQLITE_OK )
+		{
+			syslog (LOG_NOTICE, "SQL Error: %s\n",zErrMsg);
+			fprintf(stderr, "SQL error: %s\n", zErrMsg);
+			sqlite3_free(zErrMsg);
+			return EXIT_FAILURE;
+		} else {
+			std::cout << "Created new notifies table.\n";
+			syslog(LOG_NOTICE, "Database table noitifies created");
+		}
+	} else {
+		int ret_code = 0;
+		if ((ret_code = sqlite3_step(stmt)) == SQLITE_ROW)
+		{
+			int64_t blockheight = sqlite3_column_int(stmt, 0);
+			syslog(LOG_NOTICE, "Blockheight: %lu",blockheight);
+			std::cout << "Blockheight: " << blockheight << std::endl;
+		}
+		sqlite3_finalize(stmt);
 	}
-	int ret_code = 0;
-    if ((ret_code = sqlite3_step(stmt)) == SQLITE_ROW) {
-		int64_t blockheight = sqlite3_column_int(stmt, 0);
-		syslog(LOG_NOTICE, "Blockheight: %lu",blockheight);
-		std::cout << "Blockheight: " << blockheight << std::endl;
-    }
-	sqlite3_finalize(stmt);
 
 	std::cout << "Launching UNIX domain socket server thread" << std::endl;
 	pthread_create(&uxdom_thread_id, NULL, domain_socket, (void *) NULL);
