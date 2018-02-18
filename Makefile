@@ -66,3 +66,7 @@ clean:
 	rm -Rf ./lib
 	rm -Rf ./bin
 	rm -Rf ./jsoncpp-1.8.4/build
+
+wipe:
+	rm -f *.db
+	rm -f *.json
