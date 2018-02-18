@@ -212,6 +212,7 @@ hi gen_hash(std::string sendaddr,std::string recvaddr,std::string data_key,std::
 	std::stringstream hashbuilder;
 	hashbuilder << enc_nonce << previous_hash.hash << previous_hash.blockid << data_key << ttl << sig << data << sendaddr << recvaddr << nextid;
 	std::string newhash = b_hash(hashbuilder.str());
+	
 	syslog(LOG_NOTICE, "Success: gen_hash VALID hash %s" , newhash.c_str());
 	
 	std::string sql = 
@@ -353,9 +354,11 @@ Json::Value _getblock(int64_t blockid)
 			root["ttl"]				= (int) sqlite3_column_int(stmt, COL_ttl);
 			root["data_key"]		= reinterpret_cast<const char*>(sqlite3_column_text(stmt, COL_data_key));
 				std::string dt(reinterpret_cast<const char*>(sqlite3_column_text(stmt, COL_data)));
-			root["data"]			= base64_decode(dt);
+			//root["data"]			= base64_decode(dt);
+			root["data"]			= dt;
 				std::string sg(reinterpret_cast<const char*>(sqlite3_column_text(stmt, COL_sig)));
-			root["sig"]				= base64_decode(sg);
+			//root["sig"]				= base64_decode(sg);
+			root["sig"]				= sg;
 			root["sendaddr"]		= reinterpret_cast<const char*>(sqlite3_column_text(stmt, COL_sendaddr));
 			root["recvaddr"]		= reinterpret_cast<const char*>(sqlite3_column_text(stmt, COL_recvaddr));
 			root["validations"]		= (int) sqlite3_column_int(stmt, COL_validations);
@@ -512,6 +515,7 @@ bool _validateblock(Json::Value block)
 		perform = true;
 	} else {
 		syslog (LOG_NOTICE, "Invalid Hash: was %s should be %s",ohash.c_str(),newhash.c_str());
+		syslog (LOG_NOTICE, "Block: %s",block.toStyledString());
 	}
 	return (perform);
 }

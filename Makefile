@@ -60,7 +60,7 @@ libsodium:
 clean:
 	rm -f *.o
 	rm -f *.core
-	cd ./c-ares-1.14.0 && make clean
+	cd ./c-ares-1.14.0 && make distclean
 	cd ./libsodium-1.0.16 && make clean
 	rm -Rf ./include
 	rm -Rf ./lib
