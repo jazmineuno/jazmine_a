@@ -1,0 +1,72 @@
+std::string genkey(int s)
+{
+
+    sodiumpp::box_secret_key secret_key;
+    sodiumpp::sign_secret_key signing_key;
+    std::stringstream box_privkey, sign_privkey;
+    static std::string pk_encoded;
+    static std::string sk_encoded;
+    static std::string key_encoded;
+    static std::string combined_pubkey;
+        Json::Value root;
+
+    box_privkey << secret_key.get(sodiumpp::encoding::binary).bytes;
+    std::string nonce = sodiumpp::randombytes(crypto_secretbox_xchacha20poly1305_NONCEBYTES);
+    std::string key = sodiumpp::randombytes(crypto_secretbox_xchacha20poly1305_KEYBYTES);
+    std::string c = sodiumpp::crypto_secretbox(box_privkey.str(),nonce,key);
+    Base64::Encode(nonce+c, &sk_encoded);
+   
+    sign_privkey << signing_key.get(sodiumpp::encoding::binary).bytes;
+    nonce = sodiumpp::randombytes(crypto_secretbox_xchacha20poly1305_NONCEBYTES);
+    c = sodiumpp::crypto_secretbox(sign_privkey.str(),nonce,key);
+    Base64::Encode(nonce+c, &pk_encoded);
+   
+    Base64::Encode(key, &key_encoded);
+   
+    std::stringstream bs_pubkey;
+    bs_pubkey << secret_key.pk << signing_key.pk;
+    Base64::Encode(bs_pubkey.str(), &combined_pubkey);
+
+        root["bsk"]=sk_encoded;
+        root["ssk"]=pk_encoded;
+        root["key"]=key_encoded;
+        root["pk"]=combined_pubkey;
+
+/*      DEBUG
+        syslog (LOG_NOTICE, "Box Private Key Encrypted %s", sk_encoded.c_str());
+    syslog (LOG_NOTICE, "Sign Private Key Encrypted %s", pk_encoded.c_str());
+    syslog (LOG_NOTICE, "Password %s", key_encoded.c_str());
+        syslog (LOG_NOTICE, "Public Key %s", combined_pubkey.c_str());
+*/
+        syslog (LOG_NOTICE, "Generated Public Key %s (%d)", combined_pubkey.c_str(),s);
+        return (root.toStyledString());
+}
+
+
+std::string secretbox(std::string &message, std::string &nonce, unsigned char * key)
+{
+	unsigned char *out;
+	
+	size_t msglen = message.size();
+	if (msglen>crypto_secretbox_xchacha20poly1305_messagebytes_max())
+	{
+		syslog (LOG_NOTICE, "Error: sodium_crypto_secretbox failed. Message too big.");
+		return "";
+	} else {
+		out = (unsigned char *) ::sodium_malloc (crypto_secretbox_xchacha20poly1305_macbytes() + msglen);
+		int r = ::crypto_secretbox_xchacha20poly1305_easy(
+					out,
+					(const unsigned char *) message.c_str(),
+					msglen,
+					(const unsigned char *) nonce.c_str(),
+					key
+		);
+		if (r!=0)
+		{
+			syslog (LOG_NOTICE, "Error: sodium_crypto_secretbox failed");
+			return "";
+		} else {
+			return std::string((char *) out);
+		}
+	}
+}
