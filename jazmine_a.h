@@ -165,6 +165,7 @@ commands retval(std::string const& nstr);
 void remove_seed(int fd);
 void handle_alarm(int sig);
 void send_notifies(int64_t blockid);
+Json::Value _getblock(int64_t blockid);
 static void daemonize();
 Json::Value parsejson(std::string sq);
 void sync_client(int cdx);

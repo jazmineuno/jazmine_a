@@ -328,6 +328,73 @@ std::string getblock(int64_t blockid,int s)
 	return (result);
 }
 
+Json::Value _getblock(int64_t blockid)
+{
+	sqlite3_stmt* stmt;
+	std::stringstream ss;
+	Json::Value root;
+	
+	syslog(LOG_NOTICE, "Get Block: %lu",blockid);
+	
+	ss << "SELECT * FROM blocks WHERE blockid = " << blockid;
+	std::string sql(ss.str());
+	if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, NULL) != SQLITE_OK)
+	{
+//
+	} else {
+		int ret_code = 0;
+		if ((ret_code = sqlite3_step(stmt)) == SQLITE_ROW)
+		{
+			root["blockid"]			= (int64_t) sqlite3_column_int64(stmt, COL_blockid);
+			root["nonce"]			= reinterpret_cast<const char*>(sqlite3_column_text(stmt, COL_nonce));
+			root["hash"]			= reinterpret_cast<const char*>(sqlite3_column_text(stmt, COL_hash));
+			root["link_blockid"]	= (int64_t) sqlite3_column_int64(stmt, COL_link_blockid);
+			root["timestamp"]		= (int) sqlite3_column_int(stmt, COL_timestamp);
+			root["ttl"]				= (int) sqlite3_column_int(stmt, COL_ttl);
+			root["data_key"]		= reinterpret_cast<const char*>(sqlite3_column_text(stmt, COL_data_key));
+				std::string dt(reinterpret_cast<const char*>(sqlite3_column_text(stmt, COL_data)));
+			root["data"]			= base64_decode(dt);
+				std::string sg(reinterpret_cast<const char*>(sqlite3_column_text(stmt, COL_sig)));
+			root["sig"]				= base64_decode(sg);
+			root["sendaddr"]		= reinterpret_cast<const char*>(sqlite3_column_text(stmt, COL_sendaddr));
+			root["recvaddr"]		= reinterpret_cast<const char*>(sqlite3_column_text(stmt, COL_recvaddr));
+			root["validations"]		= (int) sqlite3_column_int(stmt, COL_validations);
+			root["signatures"]		= reinterpret_cast<const char*>(sqlite3_column_text(stmt, COL_signatures));
+			/*
+				std::string si(reinterpret_cast<const char*>(sqlite3_column_text(stmt, COL_signatures)));
+
+				if (si.length()>0)
+				{
+					size_t pos = 0;
+					std::string token;
+					std::string delimiter("\n");
+					std::string exp = ":";
+					while ((pos = si.find(delimiter)) != std::string::npos)
+					{
+						token = si.substr(0, pos);
+						std::string this_sig = token;
+						size_t cpos = token.find(exp);
+						std::string saddr = token.substr(0,cpos);
+						token.erase(0,cpos+exp.length());
+						root["signatures"][saddr] = token;
+						si.erase(0, pos + delimiter.length());
+					}
+                                        size_t cpos = si.find(exp);
+                                        std::string saddr = si.substr(0,cpos);
+                                        si.erase(0,cpos+exp.length());
+                                        root["signatures"][saddr] = si;
+				}
+				*/
+					
+			
+		} else {
+			syslog(LOG_NOTICE, "Error: Block not found %lu",blockid);
+		}
+	}
+	sqlite3_finalize(stmt);
+	return (root);
+}
+
 bool _addsig(int64_t blockid,std::string hash,std::string sendaddr,std::string sig)
 {
 	sqlite3_stmt* stmt;
@@ -443,6 +510,8 @@ bool _validateblock(Json::Value block)
 	if (newhash==ohash)
 	{
 		perform = true;
+	} else {
+		syslog (LOG_NOTICE, "Invalid Hash: was %s should be %s",ohash.c_str(),newhash.c_str());
 	}
 	return (perform);
 }
@@ -1324,8 +1393,9 @@ void sync_client(int cdx)
 		while ((ret_code = sqlite3_step(stmt)) == SQLITE_ROW)
 		{
 			int64_t notifyid = (int64_t) sqlite3_column_int64(stmt, 0);
+			syslog (LOG_NOTICE, "next sync : %ld",notifyid);
 			
-			Json::Value px = getblock(notifyid,fd);
+			Json::Value px = _getblock(notifyid);
 			px["command"] = "recvblock";
 			memset(buf, '0',sizeof(buf));
 			send_msg(fd,px.toStyledString());
@@ -1338,7 +1408,7 @@ void sync_client(int cdx)
 			int urc = sqlite3_exec(db, up_notify.c_str(), NULL, 0, &zErrMsg);
 			if( urc != SQLITE_OK )
 			{
-				syslog (LOG_NOTICE, "SQL Error: %s\n",zErrMsg);
+				syslog (LOG_NOTICE, "SQL Error: %s %s\n",zErrMsg,up_notify.c_str());
 				sqlite3_free(zErrMsg);
 			} else {
 				syslog (LOG_NOTICE, "Sent Notify Block %ld",notifyid);
@@ -2283,11 +2353,28 @@ int main(int argc, char* argv[])
 	std::signal(SIGINT, termHandler);
 	std::signal(SIGTERM, termHandler);
 	
+	if (sqlite3_threadsafe() > 0) {
+        int retCode = sqlite3_config(SQLITE_CONFIG_SERIALIZED);
+        if (retCode == SQLITE_OK) {
+            std::cout << "sqlite3 threads OK - using the same connection\n";
+        } else {
+            std::cout << "sqlite3 threads failed " << retCode << "\n";
+            return EXIT_FAILURE;
+        }
+    } else {
+        std::cout << "Your SQLite database is not compiled to be threadsafe.\n";
+        return EXIT_FAILURE;
+    }
+
+	
 	if(sqlite3_open(dbfile.c_str(), &db) != SQLITE_OK) {
 		syslog(LOG_NOTICE, "Error: Cannot open database: %s", sqlite3_errmsg(db));
         sqlite3_close(db);
         return 1;
     }
+    
+    ::chmod(dbfile.c_str(),0666);
+    
     
     std::cout << "Checking database" << std::endl;
     
@@ -2349,6 +2436,12 @@ int main(int argc, char* argv[])
 	
 	load_seeds();
 	alarm(dns_ttl);
+
+	if(sqlite3_open(dbfile.c_str(), &db) != SQLITE_OK) {
+		syslog(LOG_NOTICE, "Error: Cannot open database: %s", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        return 1;
+    }
 
 	for (;;)
 	{

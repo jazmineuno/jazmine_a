@@ -552,7 +552,7 @@ configure: failed program was:
 configure:16286: result: no
 configure:16184: checking whether pthreads work without any flags
 configure:16277: gcc -o conftest -g -O2     conftest.c   >&5
-/tmp//cccO2mtL.o: In function `main':
+/tmp//ccK9WgVp.o: In function `main':
 /usr/home/waitman/projects/jazmine_a/c-ares-1.14.0/test/conftest.c:28: undefined reference to `pthread_create'
 collect2: error: ld returned 1 exit status
 configure:16277: $? = 1
